@@ -1,0 +1,17 @@
+# Build outputs (from build.sh)
+DiskKeepAlive
+
+# App bundle (from build-release.sh)
+Disk Keep Alive.app/
+
+# DMG (from build-release.sh)
+*.dmg
+
+# Temp folder (from build-release.sh)
+dmg_temp/
+
+# Icon build temp (from create-icns.sh)
+AppIcon.iconset/
+
+# macOS
+.DS_Store
