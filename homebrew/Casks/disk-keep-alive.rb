@@ -1,6 +1,6 @@
 cask "disk-keep-alive" do
   version "1.0.0"
-  sha256 "REPLACE_WITH_SHA256_OF_DMG"
+  sha256 "586e62e8717299924e5fae04f1d9bfbbf95b5409a27b7329be9ead5a0e3a872f"
 
   url "https://github.com/meichengg/disk-keep-alive/releases/download/v#{version}/DiskKeepAlive-#{version}.dmg"
   name "Disk Keep Alive"
@@ -8,6 +8,11 @@ cask "disk-keep-alive" do
   homepage "https://github.com/meichengg/disk-keep-alive"
 
   depends_on macos: ">= :monterey"
+
+  livecheck do
+    url :url
+    strategy :github_releases
+  end
 
   app "Disk Keep Alive.app"
 
