@@ -3,7 +3,13 @@ set -e
 
 APP_NAME="Disk Keep Alive"
 BUNDLE_ID="com.local.diskKeepalive"
-VERSION="1.0.0"
+
+# Extract version from Swift source
+VERSION=$(grep -o 'static let version = "[^"]*"' DiskKeepAlive.swift | cut -d'"' -f2)
+if [ -z "$VERSION" ]; then
+    echo "❌ Failed to extract version from DiskKeepAlive.swift"
+    exit 1
+fi
 
 echo "🔨 Building $APP_NAME v$VERSION..."
 

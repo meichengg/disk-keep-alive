@@ -3,6 +3,13 @@ import AppKit
 import IOKit.pwr_mgt
 import ServiceManagement
 
+// MARK: - App Info
+struct AppInfo {
+    static let version = "1.1.0"
+    static let repoURL = "https://github.com/meichengg/disk-keep-alive"
+    static let releasesAPI = "https://api.github.com/repos/meichengg/disk-keep-alive/releases/latest"
+}
+
 // MARK: - Volume Model
 struct Volume: Identifiable, Equatable {
     let id: String
@@ -549,6 +556,126 @@ struct VolumeRow: View {
 }
 
 
+// MARK: - About Window
+class AboutWindowController {
+    static let shared = AboutWindowController()
+    private var window: NSWindow?
+    
+    func show() {
+        if let w = window {
+            w.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        
+        let w = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 350),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        w.title = "About Disk Keep Alive"
+        w.contentView = NSHostingView(rootView: AboutView())
+        w.center()
+        w.isReleasedWhenClosed = false
+        window = w
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+struct AboutView: View {
+    @State private var changelog: String = "Loading..."
+    @State private var latestVersion: String = ""
+    @State private var isLoading = true
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // App icon and name
+            Image(systemName: "externaldrive.fill.badge.checkmark")
+                .font(.system(size: 48))
+                .foregroundColor(.accentColor)
+            
+            Text("Disk Keep Alive")
+                .font(.title.bold())
+            
+            Text("Version \(AppInfo.version)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            if !latestVersion.isEmpty && latestVersion != AppInfo.version {
+                Text("New version available: \(latestVersion)")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+            
+            Divider()
+            
+            // Changelog
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Latest Release Notes")
+                    .font(.headline)
+                
+                if isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else {
+                    ScrollView {
+                        Text(changelog)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(height: 120)
+                    .background(Color.black.opacity(0.03))
+                    .cornerRadius(8)
+                }
+            }
+            
+            Divider()
+            
+            HStack(spacing: 16) {
+                Button("GitHub") {
+                    if let url = URL(string: AppInfo.repoURL) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                
+                Button("Check for Updates") {
+                    fetchChangelog()
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 400)
+        .onAppear { fetchChangelog() }
+    }
+    
+    func fetchChangelog() {
+        isLoading = true
+        guard let url = URL(string: AppInfo.releasesAPI) else { return }
+        
+        URLSession.shared.dataTask(with: url) { data, _, error in
+            DispatchQueue.main.async {
+                isLoading = false
+                
+                guard let data = data, error == nil else {
+                    changelog = "Failed to fetch changelog"
+                    return
+                }
+                
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        latestVersion = (json["tag_name"] as? String)?.replacingOccurrences(of: "v", with: "") ?? ""
+                        changelog = json["body"] as? String ?? "No release notes"
+                    }
+                } catch {
+                    changelog = "Failed to parse changelog"
+                }
+            }
+        }.resume()
+    }
+}
+
 // MARK: - App Delegate (Menu Bar Only)
 class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
@@ -594,6 +721,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(launchItem)
         
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "About", action: #selector(showAbout), keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: ""))
         statusItem.menu = menu
         
@@ -623,6 +752,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             VolumeManager.shared.log("⚠️ Launch at Login requires macOS 13+")
         }
+    }
+    
+    @objc func showAbout() {
+        AboutWindowController.shared.show()
     }
     
     @objc func showWindow() {
