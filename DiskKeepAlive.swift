@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import IOKit.pwr_mgt
+import ServiceManagement
 
 // MARK: - Volume Model
 struct Volume: Identifiable, Equatable {
@@ -36,6 +37,34 @@ struct LogEntry: Identifiable {
     }
 }
 
+// MARK: - Settings Manager
+class SettingsManager {
+    static let shared = SettingsManager()
+    private let defaults = UserDefaults.standard
+    
+    private let kSavedVolumes = "savedVolumeIDs"
+    private let kInterval = "pingInterval"
+    private let kLaunchAtLogin = "launchAtLogin"
+    
+    var savedVolumeIDs: Set<String> {
+        get { Set(defaults.stringArray(forKey: kSavedVolumes) ?? []) }
+        set { defaults.set(Array(newValue), forKey: kSavedVolumes) }
+    }
+    
+    var interval: Double {
+        get { 
+            let val = defaults.double(forKey: kInterval)
+            return val > 0 ? val : 30
+        }
+        set { defaults.set(newValue, forKey: kInterval) }
+    }
+    
+    var launchAtLogin: Bool {
+        get { defaults.bool(forKey: kLaunchAtLogin) }
+        set { defaults.set(newValue, forKey: kLaunchAtLogin) }
+    }
+}
+
 // MARK: - Volume Manager
 class VolumeManager: ObservableObject {
     static let shared = VolumeManager()
@@ -43,18 +72,59 @@ class VolumeManager: ObservableObject {
     @Published var volumes: [Volume] = []
     @Published var activeVolumes: Set<String> = []
     @Published var failedVolumes: Set<String> = []
-    @Published var interval: Double = 30 {
-        didSet { if interval != oldValue { restartAllTimers() } }
+    @Published var interval: Double = SettingsManager.shared.interval {
+        didSet { 
+            if interval != oldValue { 
+                restartAllTimers()
+                SettingsManager.shared.interval = interval
+            }
+        }
     }
     @Published var logs: [LogEntry] = []
     
     private var timers: [String: Timer] = [:]
     private var powerAssertions: [String: IOPMAssertionID] = [:]
     private var observers: [NSObjectProtocol] = []
+    private var pendingVolumeIDs: Set<String> = []
     
     init() {
         setupObservers()
         refresh()
+        restoreFromSettings()
+    }
+    
+    private func restoreFromSettings() {
+        let savedIDs = SettingsManager.shared.savedVolumeIDs
+        guard !savedIDs.isEmpty else { return }
+        
+        pendingVolumeIDs = savedIDs
+        log("🔄 Restoring \(savedIDs.count) saved volume(s)...")
+        
+        // Start any already mounted volumes immediately
+        startPendingVolumes()
+        
+        if !pendingVolumeIDs.isEmpty {
+            log("⏳ Waiting for: \(pendingVolumeIDs.joined(separator: ", "))")
+        }
+    }
+    
+    private func startPendingVolumes() {
+        for vol in volumes {
+            if pendingVolumeIDs.contains(vol.id) && !activeVolumes.contains(vol.path) {
+                start(vol)
+                pendingVolumeIDs.remove(vol.id)
+                log("✅ Restored: \(vol.name)")
+            }
+        }
+        
+        if pendingVolumeIDs.isEmpty && !activeVolumes.isEmpty {
+            log("✅ All saved volumes restored")
+        }
+    }
+    
+    func saveCurrentState() {
+        let activeIDs = Set(volumes.filter { activeVolumes.contains($0.path) }.map { $0.id })
+        SettingsManager.shared.savedVolumeIDs = activeIDs
     }
     
     private func setupObservers() {
@@ -64,6 +134,8 @@ class VolumeManager: ObservableObject {
                 self?.log("📀 Mounted: \(url.lastPathComponent)")
             }
             self?.refresh()
+            // Check if this is a pending volume we're waiting for
+            self?.startPendingVolumes()
         })
         observers.append(nc.addObserver(forName: NSWorkspace.didUnmountNotification, object: nil, queue: .main) { [weak self] n in
             if let url = n.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL {
@@ -122,6 +194,7 @@ class VolumeManager: ObservableObject {
         createAssertion(vol)
         startTimer(vol)
         log("▶️ Started: \(vol.name) (interval: \(Int(interval))s)")
+        saveCurrentState()
     }
     
     func stop(path: String) {
@@ -137,6 +210,7 @@ class VolumeManager: ObservableObject {
         }
         activeVolumes.remove(path)
         failedVolumes.remove(path)
+        saveCurrentState()
     }
     
     func startAll() { volumes.forEach { start($0) } }
@@ -300,7 +374,7 @@ struct ContentView: View {
     @ObservedObject var vm = VolumeManager.shared
     @State private var showLogs = false
     @State private var copyToast = false
-    @State private var sliderValue: Double = VolumeManager.shared.interval
+    @State private var sliderValue: Double = SettingsManager.shared.interval
     
     var body: some View {
         VStack(spacing: 0) {
@@ -514,12 +588,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Start All", action: #selector(startAll), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Stop All", action: #selector(stopAll), keyEquivalent: ""))
         menu.addItem(.separator())
+        
+        let launchItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchItem.state = SettingsManager.shared.launchAtLogin ? .on : .off
+        menu.addItem(launchItem)
+        
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: ""))
         statusItem.menu = menu
         
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             let active = !VolumeManager.shared.activeVolumes.isEmpty
             self?.statusItem.button?.image = NSImage(systemSymbolName: active ? "externaldrive.fill.badge.checkmark" : "externaldrive.fill", accessibilityDescription: nil)
+        }
+    }
+    
+    @objc func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let newState = !SettingsManager.shared.launchAtLogin
+        SettingsManager.shared.launchAtLogin = newState
+        sender.state = newState ? .on : .off
+        
+        if #available(macOS 13.0, *) {
+            do {
+                if newState {
+                    try SMAppService.mainApp.register()
+                    VolumeManager.shared.log("✅ Enabled Launch at Login")
+                } else {
+                    try SMAppService.mainApp.unregister()
+                    VolumeManager.shared.log("✅ Disabled Launch at Login")
+                }
+            } catch {
+                VolumeManager.shared.log("❌ Launch at Login failed: \(error.localizedDescription)")
+            }
+        } else {
+            VolumeManager.shared.log("⚠️ Launch at Login requires macOS 13+")
         }
     }
     
