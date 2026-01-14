@@ -49,7 +49,7 @@ This creates real disk activity that the dock's controller recognizes, keeping t
 ### Homebrew (recommended)
 
 ```bash
-brew install --cask meichengg/disk-keep-alive/disk-keep-alive
+brew install --cask meichengg/tap/disk-keep-alive
 ```
 
 ### From DMG
