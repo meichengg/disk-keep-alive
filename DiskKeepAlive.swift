@@ -5,9 +5,9 @@ import ServiceManagement
 
 // MARK: - App Info
 struct AppInfo {
-    static let version = "1.1.0"
+    static let version = "1.2.0"
     static let repoURL = "https://github.com/meichengg/disk-keep-alive"
-    static let releasesAPI = "https://api.github.com/repos/meichengg/disk-keep-alive/releases/latest"
+    static let changelogURL = "https://raw.githubusercontent.com/meichengg/disk-keep-alive/master/CHANGELOG.md"
 }
 
 // MARK: - Volume Model
@@ -556,6 +556,80 @@ struct VolumeRow: View {
 }
 
 
+// MARK: - Update Checker
+class UpdateChecker {
+    static let shared = UpdateChecker()
+    private var timer: Timer?
+    
+    func startPeriodicCheck() {
+        // Check immediately on startup
+        checkForUpdate()
+        
+        // Then check every 6 hours
+        timer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in
+            self?.checkForUpdate()
+        }
+    }
+    
+    func checkForUpdate() {
+        guard let url = URL(string: AppInfo.changelogURL) else { return }
+        
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            guard let data = data, error == nil,
+                  let content = String(data: data, encoding: .utf8) else { return }
+            
+            // Parse latest version from changelog
+            let lines = content.components(separatedBy: "\n")
+            for line in lines {
+                if line.hasPrefix("## ") {
+                    let versionLine = line.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces)
+                    if let match = versionLine.range(of: #"\d+\.\d+\.\d+"#, options: .regularExpression) {
+                        let latestVersion = String(versionLine[match])
+                        if latestVersion != AppInfo.version && self.isNewer(latestVersion, than: AppInfo.version) {
+                            DispatchQueue.main.async {
+                                VolumeManager.shared.log("🆕 Update available: v\(latestVersion)")
+                                self.showUpdateNotification(latestVersion)
+                            }
+                        }
+                        break
+                    }
+                }
+            }
+        }.resume()
+    }
+    
+    private func isNewer(_ new: String, than current: String) -> Bool {
+        let newParts = new.split(separator: ".").compactMap { Int($0) }
+        let currentParts = current.split(separator: ".").compactMap { Int($0) }
+        
+        for i in 0..<max(newParts.count, currentParts.count) {
+            let n = i < newParts.count ? newParts[i] : 0
+            let c = i < currentParts.count ? currentParts[i] : 0
+            if n > c { return true }
+            if n < c { return false }
+        }
+        return false
+    }
+    
+    private func showUpdateNotification(_ version: String) {
+        let alert = NSAlert()
+        alert.messageText = "Update Available"
+        alert.informativeText = "Disk Keep Alive v\(version) is available. You are currently using v\(AppInfo.version)."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Later")
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let url = URL(string: "\(AppInfo.repoURL)/releases/latest") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+}
+
 // MARK: - About Window
 class AboutWindowController {
     static let shared = AboutWindowController()
@@ -652,25 +726,34 @@ struct AboutView: View {
     
     func fetchChangelog() {
         isLoading = true
-        guard let url = URL(string: AppInfo.releasesAPI) else { return }
+        guard let url = URL(string: AppInfo.changelogURL) else { return }
         
-        URLSession.shared.dataTask(with: url) { data, _, error in
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 isLoading = false
                 
-                guard let data = data, error == nil else {
+                guard let data = data, error == nil,
+                      let content = String(data: data, encoding: .utf8) else {
                     changelog = "Failed to fetch changelog"
                     return
                 }
                 
-                do {
-                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        latestVersion = (json["tag_name"] as? String)?.replacingOccurrences(of: "v", with: "") ?? ""
-                        changelog = json["body"] as? String ?? "No release notes"
+                // Parse latest version from changelog
+                let lines = content.components(separatedBy: "\n")
+                for line in lines {
+                    if line.hasPrefix("## ") || line.hasPrefix("# ") {
+                        let versionLine = line.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces)
+                        if let match = versionLine.range(of: #"\d+\.\d+\.\d+"#, options: .regularExpression) {
+                            latestVersion = String(versionLine[match])
+                            break
+                        }
                     }
-                } catch {
-                    changelog = "Failed to parse changelog"
                 }
+                
+                changelog = content
             }
         }.resume()
     }
@@ -687,6 +770,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         createWindow()
         createMenuBar()
         VolumeManager.shared.log("🚀 App started")
+        
+        // Start periodic update check
+        UpdateChecker.shared.startPeriodicCheck()
     }
     
     func createWindow() {
