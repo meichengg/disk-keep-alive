@@ -694,10 +694,13 @@ struct AboutView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 } else {
                     ScrollView {
-                        Text(changelog)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(parseMarkdownLines(changelog).enumerated()), id: \.offset) { _, line in
+                                line
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
                     }
                     .frame(height: 120)
                     .background(Color.black.opacity(0.03))
@@ -753,9 +756,96 @@ struct AboutView: View {
                     }
                 }
                 
-                changelog = content
+                // Extract only current version's changelog
+                changelog = self.extractVersionChangelog(from: content, version: AppInfo.version)
             }
         }.resume()
+    }
+    
+    func extractVersionChangelog(from content: String, version: String) -> String {
+        let lines = content.components(separatedBy: "\n")
+        var result: [String] = []
+        var capturing = false
+        
+        for line in lines {
+            if line.hasPrefix("## ") {
+                if line.contains(version) {
+                    capturing = true
+                    continue
+                } else if capturing {
+                    break
+                }
+            }
+            if capturing {
+                result.append(line)
+            }
+        }
+        
+        return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    func markdownToAttributed(_ markdown: String) -> AttributedString {
+        var result = AttributedString()
+        let lines = markdown.components(separatedBy: "\n")
+        
+        for (index, line) in lines.enumerated() {
+            var text = line
+            var attrs = AttributeContainer()
+            
+            // Headers (### or ##)
+            if line.hasPrefix("### ") {
+                text = String(line.dropFirst(4))
+                attrs.font = .headline
+                attrs.foregroundColor = .primary
+            } else if line.hasPrefix("## ") {
+                text = String(line.dropFirst(3))
+                attrs.font = .title3.bold()
+                attrs.foregroundColor = .primary
+            }
+            // Bullet points
+            else if line.hasPrefix("- ") {
+                text = "• " + String(line.dropFirst(2))
+                attrs.font = .caption
+            }
+            // Regular text
+            else {
+                attrs.font = .caption
+            }
+            
+            var attrLine = AttributedString(text)
+            attrLine.mergeAttributes(attrs)
+            result.append(attrLine)
+            
+            if index < lines.count - 1 {
+                result.append(AttributedString("\n"))
+            }
+        }
+        
+        return result
+    }
+    
+    func parseMarkdownLines(_ markdown: String) -> [Text] {
+        let lines = markdown.components(separatedBy: "\n")
+        var result: [Text] = []
+        
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            
+            if line.hasPrefix("### ") {
+                let text = String(line.dropFirst(4))
+                result.append(Text(text).font(.subheadline.bold()).foregroundColor(.primary))
+            } else if line.hasPrefix("## ") {
+                let text = String(line.dropFirst(3))
+                result.append(Text(text).font(.headline.bold()).foregroundColor(.primary))
+            } else if line.hasPrefix("- ") {
+                let text = "  •  " + String(line.dropFirst(2))
+                result.append(Text(text).font(.caption).foregroundColor(.secondary))
+            } else {
+                result.append(Text(line).font(.caption).foregroundColor(.secondary))
+            }
+        }
+        
+        return result
     }
 }
 

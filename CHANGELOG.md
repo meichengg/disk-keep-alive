@@ -3,12 +3,12 @@
 ## 1.2.0
 
 ### What's New
-- About window: View current version and changelog
-- Auto update checker: Checks on startup and every 6 hours, notifies when new version available
-- GitHub link: Quick access to repository from About window
+- About window with version info and changelog
+- Auto update checker on startup and every 6 hours
+- Changelog rendered with proper markdown formatting
 
 ### Improvements
-- Build script now reads version from source code automatically
+- Build script reads version from source code automatically
 - Use CHANGELOG.md instead of GitHub API to avoid rate limiting
 
 ## 1.1.0
